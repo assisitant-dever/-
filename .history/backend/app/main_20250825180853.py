@@ -1,0 +1,30 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from .api import router as api_router
+from .conversations import router as conv_router
+from .auth import router as auth_router  # 新加
+from .models import Base
+from .database import engine
+app = FastAPI()
+Base.metadata.create_all(bind=engine)
+
+origins = [
+    "http://localhost:3000",  # 前端开发地址
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # 注意不要用 "*"
+    allow_credentials=True,  # 允许 cookies
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 路由注册
+app.include_router(auth_router, prefix="/auth")           # 用户注册/登录
+app.include_router(api_router, prefix="")            # 公文生成等通用接口
+app.include_router(conv_router, prefix="")  # 对话功能接口
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
