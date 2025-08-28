@@ -1,0 +1,37 @@
+# 虚拟环境（必加！服务器需重新创建）
+venv/
+env/
+ENV/
+*.env
+*.venv
+
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 测试相关
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 日志和临时文件
+logs/
+tmp/
+*.log
+
+# 本地数据库文件（如 SQLite）
+*.db
+db.sqlite3
+db.sqlite3-journal
+
+# 敏感配置文件（包含密码、密钥等）
+config/secret.py
+*.pem
+*.key
+
+# IDE 配置文件（可选，根据你用的编辑器添加）
+.idea/
+.vscode/
+*.swp
+*.swo
