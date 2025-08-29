@@ -173,26 +173,37 @@ const [formState, setFormState] = useState<{
   };
 
   const handleSaveOrAdd = async () => {
-    // 新增时必须输入 API Key
+    // 1. 基础校验：新增时必须输入 API Key；编辑时可选（空则不更新）
     if (!currentConfig && !formState.api_key.trim()) {
-      toast.warning("请输入API Key");
+      toast.warning("新增配置必须输入 API Key");
       return;
     }
 
+    // 2. 初始化 payload：仅包含必传/可选字段，避免冗余
+    const payload: Record<string, any> = {};
 
-    const payload: any = {
-      api_key: formState.api_key,
-      base_url: formState.base_url || undefined,
-    };
+    // 3. API Key 处理：仅当用户输入了新密钥时才传递（编辑时空则不传，保留原密钥）
+    if (formState.api_key.trim()) {
+      payload.api_key = formState.api_key;
+    }
 
-    // 场景1：选择系统模型（有 model_id）→ 后端自动获取 platform_name/model_name，前端无需传
-    if (formState.model_id && formState.model_id !== 0) {
+    // 4. BaseURL 处理：空则传 undefined（后端若有默认值会使用）
+    if (formState.base_url?.trim()) {
+      payload.base_url = formState.base_url.trim();
+    } else {
+      payload.base_url = undefined;
+    }
+
+    // 5. 模型类型区分：系统模型（传 model_id）vs 自定义模型（传 platform_name + model_name）
+    const isSystemModel = formState.model_id && formState.model_id !== 0;
+    const customPlatform = formState.custom_platform_name?.trim();
+    const customModel = formState.custom_model_name?.trim();
+
+    if (isSystemModel) {
+      // 场景1：选择系统模型 → 仅传 model_id（后端自动关联平台/模型名称）
       payload.model_id = formState.model_id;
-    } 
-    // 场景2：自定义模型（无 model_id）→ 必须传 platform_name 和 model_name
-    else {
-      const customPlatform = formState.custom_platform_name?.trim();
-      const customModel = formState.custom_model_name?.trim();
+    } else {
+      // 场景2：自定义模型 → 必须传平台和模型名称（新增/编辑都需校验）
       if (!customPlatform || !customModel) {
         toast.warning("自定义配置必须输入平台名称和模型名称");
         return;
@@ -201,17 +212,20 @@ const [formState, setFormState] = useState<{
       payload.model_name = customModel;
     }
 
-    if (formState.model_id) payload.model_id = formState.model_id;
-
+    // 6. 发送请求（区分新增 POST / 编辑 PUT）
     setLoading(true);
     try {
-      const res = currentConfig
-        ? await api.put(`/api/keys/${currentConfig.id}`, payload)
-        : await api.post('/api/keys', payload);
+      const requestConfig = {
+        url: currentConfig ? `/api/keys/${currentConfig.id}` : "/api/keys",
+        method: currentConfig ? "put" : "post",
+        data: payload, // 仅传递处理后的 payload，无冗余字段
+      };
 
-      // 更新列表
+      const res = await api(requestConfig);
+
+      // 7. 更新前端状态：刷新列表、切换选中配置、关闭编辑态
       const updatedConfigs = currentConfig
-        ? apiKeyConfigs.map(c => c.id === currentConfig.id ? res.data : c)
+        ? apiKeyConfigs.map((c) => (c.id === currentConfig.id ? res.data : c))
         : [...apiKeyConfigs, res.data];
       setApiKeyConfigs(updatedConfigs);
       setCurrentConfig(res.data);
@@ -219,8 +233,10 @@ const [formState, setFormState] = useState<{
       toast.success(currentConfig ? "配置更新成功" : "配置新增成功");
       onConfigChange && onConfigChange();
     } catch (error: any) {
-      console.error(error);
-      toast.error(error.response?.data?.detail || "操作失败");
+      console.error("操作失败详情：", error);
+      // 优先显示后端返回的错误信息，无则用默认提示
+      const errorMsg = error.response?.data?.detail || "操作失败，请检查参数后重试";
+      toast.error(errorMsg);
     } finally {
       setLoading(false);
     }

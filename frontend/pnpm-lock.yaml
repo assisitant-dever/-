@@ -45,8 +45,8 @@ importers:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@18.3.21)(react@18.3.1)
       react-mde:
-        specifier: ^11.5.0
-        version: 11.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: ^12.0.8
+        version: 12.0.8
       react-quill:
         specifier: ^2.0.0
         version: 2.0.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -1511,11 +1511,8 @@ packages:
       '@types/react': '>=18'
       react: '>=18'
 
-  react-mde@11.5.0:
-    resolution: {integrity: sha512-CH/VK6d+tpVjJ8rTXfh1dDt6GWedTgCU0668p8toqhAc3vy0Lu872O2RKYDSpkUrlbHI08fjUPTl++nExp6gag==}
-    peerDependencies:
-      react: ^17.0.0
-      react-dom: ^17.0.0
+  react-mde@12.0.8:
+    resolution: {integrity: sha512-cCjc1TlickhF1VDvFaJME7hskW+Iko87pg1dUjrpoKZqPEK1QSeDYRLxwmYFlx/2IVowjKfQoQV6huYR1uzWCA==}
 
   react-quill@2.0.0:
     resolution: {integrity: sha512-4qQtv1FtCfLgoD3PXAur5RyxuUbPXQGOHgTlFie3jtxp43mXDtzCKaOgQ3mLyZfi1PUlyjycfivKelFhy13QUg==}
@@ -3400,10 +3397,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  react-mde@11.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
-    dependencies:
-      react: 18.3.1
-      react-dom: 18.3.1(react@18.3.1)
+  react-mde@12.0.8: {}
 
   react-quill@2.0.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
