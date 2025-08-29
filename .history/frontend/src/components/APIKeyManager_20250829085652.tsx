@@ -144,18 +144,19 @@ const [formState, setFormState] = useState<{
     toast.info(`已选择模型：${config.platform_name} - ${config.model_name}`);
   };
 
-  const handleEdit = () => {
-    if (!currentConfig) return toast.warning("请先选择配置");
+const handleEdit = () => {
+  if (!currentConfig) return toast.warning("请先选择配置");
 
-    setFormState({
-      model_id: currentConfig.model_id,  // 正确使用 model_id
-      api_key: '',  // 编辑时初始化为空，不显示原密钥
-      base_url: currentConfig.base_url || '',
-      platform_name: currentConfig.platform_name,
-      model_name: currentConfig.model_name,
-      custom_model_name: '',
-      custom_platform_name: ''
-    });
+  // 直接使用当前配置的 model_id，无需再查找 systemModels
+  setFormState({
+    model_id: currentConfig.model_id, // ✅ 修复 model_id 来源
+    api_key: '', // 建议：可提示用户“如需修改API Key请重新输入”
+    base_url: currentConfig.base_url || '',
+    platform_name: currentConfig.platform_name,
+    model_name: currentConfig.model_name,
+    custom_model_name: '',
+    custom_platform_name: ''
+  });
 
   setIsEditing(true);
 };
@@ -173,12 +174,10 @@ const [formState, setFormState] = useState<{
   };
 
   const handleSaveOrAdd = async () => {
-    // 新增时必须输入 API Key
-    if (!currentConfig && !formState.api_key.trim()) {
+    if (!formState.api_key.trim()) {
       toast.warning("请输入API Key");
       return;
     }
-
 
     const payload: any = {
       api_key: formState.api_key,

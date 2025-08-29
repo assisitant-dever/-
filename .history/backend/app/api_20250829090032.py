@@ -852,56 +852,60 @@ async def update_ai_model(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # 检查 model_id（原有逻辑保留）
+    # 1️⃣ 检查 model_id 是否为空（原有逻辑保留）
     if not ai_model_update.model_id:
-        raise HTTPException(status_code=400, detail="更新失败：model_id 不能为空")
+        raise HTTPException(status_code=400, detail="更新失败：被更新的model_id 不能为空")
 
-    # 查询要更新的模型
+    # 2️⃣ 查询要更新的 AI 模型（原有逻辑保留）
     ai_model = db.query(AIModel).filter(
         AIModel.id == ai_model_id, AIModel.user_id == current_user.id
     ).first()
     if not ai_model:
         raise HTTPException(status_code=404, detail="AI 模型不存在")
 
-    # 查询系统模型是否支持（原有逻辑保留）
+    # 3️⃣ 查询系统模型是否存在且支持（原有逻辑保留）
     system_model = db.query(Model).filter(
         Model.id == ai_model_update.model_id, Model.is_supported == True
     ).first()
     if not system_model:
         raise HTTPException(status_code=400, detail="系统未支持该模型，无法切换")
 
-    # 关键：仅当 api_key 有值时才更新加密
-    if ai_model_update.api_key:
-        try:
-            ai_model.api_key = encrypt_api_key(ai_model_update.api_key)
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"API Key 加密失败：{str(e)}")
+    # 4️⃣ 修复：加密 API Key（新增逻辑，与新增接口保持一致）
+    try:
+        encrypted_key = encrypt_api_key(ai_model_update.api_key)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"API Key 加密失败：{str(e)}")
 
-    # 更新其他字段（base_url 可选）
+    # 5️⃣ 更新字段（修复：使用加密后的 key）
+    ai_model.model_id = ai_model_update.model_id
+    ai_model.api_key = encrypted_key  # ✅ 用加密后的 key，不是原始 key
     if ai_model_update.base_url:
         ai_model.base_url = ai_model_update.base_url
-    ai_model.model_id = ai_model_update.model_id  # 更新 model_id
 
     db.commit()
     db.refresh(ai_model)
 
-    # 构造返回数据（脱敏处理）
-    raw_key = decrypt_api_key(ai_model.api_key) if ai_model.api_key else ""
-    if len(raw_key) <= 8:
-        api_key_mask = f"{raw_key[:4]}***" if raw_key else ""
-    else:
-        api_key_mask = f"{raw_key[:4]}***{raw_key[-4:]}" if raw_key else ""
-
-    return {
+    # 5️⃣ 构造返回字典
+    response_data = {
         "id": ai_model.id,
-        "platform_name": system_model.platform.name,
-        "model_name": system_model.name,
-        "api_key_mask": api_key_mask,
+        "api_key_mask": "",  # 默认脱敏为空
         "base_url": ai_model.base_url,
         "created_at": ai_model.created_at,
-        "model_id": ai_model.model_id
+        "platform_name": system_model.platform.name if system_model.platform else "未知平台",
+        "model_name": system_model.name or "未知模型"
     }
+
+    # 6️⃣ 脱敏 API Key
+    raw_key = ai_model.api_key or ""
+    if raw_key:
+        if len(raw_key) <= 8:
+            response_data["api_key_mask"] = f"{raw_key[:4]}***"
+        else:
+            response_data["api_key_mask"] = f"{raw_key[:4]}***{raw_key[-4:]}"
+
+    # 7️⃣ 返回 Pydantic 对象
+    return AIModelResponse(**response_data)
 
 
 # ----------------- 接口：更新模板内容（新增） -----------------
