@@ -25,7 +25,7 @@ export default function HomePage() {
           {docs.map((d) => (
             <li key={d}>
               <a
-                href={`http://127.0.0.1:8000/api/download/${encodeURIComponent(d)}`}
+                href={`/api/download/${encodeURIComponent(d)}`}
                 target="_blank"
                 rel="noreferrer"
                 className="text-blue-500 hover:underline"
