@@ -40,12 +40,12 @@ export default function ChatWindow({ conversation }: { conversation: Conversatio
     formData.append("user_input", input);
     if (file) formData.append("file", file);
 
-    const res = await axios.post("${process.env.REACT_APP_API_BASE_URL}/api/generate", formData);
+    const res = await axios.post("http://127.0.0.1:8000/api/generate", formData);
     const aiText = res.data.text;
     const docxFile = res.data.filename;
 
     // 保存 assistant 消息
-    const aiMsg = await axios.post(`${process.env.REACT_APP_API_BASE_URL}/api/conversations/${conversation.id}/messages`, {
+    const aiMsg = await axios.post(`http://127.0.0.1:8000/api/conversations/${conversation.id}/messages`, {
       role: "assistant",
       content: aiText,
       docx_file: docxFile
@@ -65,7 +65,7 @@ export default function ChatWindow({ conversation }: { conversation: Conversatio
             {m.docx_file && (
               <a
                 className="text-sm text-blue-400 underline block mt-1"
-                href={`${process.env.REACT_APP_API_BASE_URL}/api/download/${encodeURIComponent(m.docx_file)}`}
+                href={`http://127.0.0.1:8000/api/download/${encodeURIComponent(m.docx_file)}`}
                 target="_blank"
                 rel="noopener noreferrer"
               >
