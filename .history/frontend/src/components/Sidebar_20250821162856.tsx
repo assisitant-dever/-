@@ -13,18 +13,18 @@ export default function Sidebar({ onSelect }: { onSelect: (c: Conversation) => v
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
   const fetchConvs = async () => {
-    const res = await axios.get("http://127.0.0.1:8000/api/conversations");
+    const res = await axios.get("/api/conversations");
     setConversations(res.data);
   };
 
   const newConv = async () => {
-    const res = await axios.post("http://127.0.0.1:8000/api/conversations", { title: "新对话" });
+    const res = await axios.post("/api/conversations", { title: "新对话" });
     fetchConvs();
     onSelect(res.data);
   };
 
   const deleteConv = async (id: number) => {
-    await axios.delete(`http://127.0.0.1:8000/api/conversations/${id}`);
+    await axios.delete(`/api/conversations/${id}`);
     fetchConvs();
   };
 
