@@ -41,7 +41,7 @@ export default function Editor() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const res = await axios.post("http://127.0.0.1:8000/upload-template", formData);
+      const res = await axios.post("/upload-template", formData);
       toast.success(`模板 "${res.data.filename}" 上传成功`);
     } catch (err) {
       console.error(err);
@@ -62,7 +62,7 @@ export default function Editor() {
       formData.append("user_input", userInput);
       if (selectedTemplate) formData.append("template_filename", selectedTemplate.name);
 
-      const response = await axios.post("http://127.0.0.1:8000/api/generate", formData);
+      const response = await axios.post("/api/generate", formData);
       setEditorContent(response.data.text || "");
       setGeneratedFile(response.data.filename); 
       toast.success("生成预览成功！");
@@ -80,7 +80,7 @@ export default function Editor() {
     if (!fileToDownload) return;
     try {
       const res = await axios.get(
-        `http://127.0.0.1:8000/api/download/${encodeURIComponent(fileToDownload)}`,
+        `/api/download/${encodeURIComponent(fileToDownload)}`,
         { responseType: "blob" }
       );
       const blob = new Blob([res.data], {
@@ -99,7 +99,7 @@ export default function Editor() {
 
   const fetchConversations = async () => {
     try {
-      const res = await axios.get("http://127.0.0.1:8000/api/conversations/");
+      const res = await axios.get("/api/conversations/");
       setConversations(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error(err);
@@ -109,7 +109,7 @@ export default function Editor() {
 
   const createNewConversation = async () => {
     try {
-      const res = await axios.post("http://127.0.0.1:8000/api/conversations/", { title: "新对话" });
+      const res = await axios.post("/api/conversations/", { title: "新对话" });
       setConversations([...conversations, res.data]);
       setCurrentConv(res.data);
     } catch (err) {
@@ -120,7 +120,7 @@ export default function Editor() {
 
   const selectConversation = async (conv: any) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/api/conversations/${conv.id}`);
+      const res = await axios.get(`/api/conversations/${conv.id}`);
       setCurrentConv(res.data);
     } catch (err) {
       console.error(err);
@@ -163,7 +163,7 @@ export default function Editor() {
       if (templateFile) formData.append("template_filename", templateFile.name);
 
       const response = await axios.post(
-        "http://127.0.0.1:8000/api/generate",
+        "/api/generate",
         formData,
         { headers: { "Content-Type": "multipart/form-data" } }
       );
@@ -232,7 +232,7 @@ export default function Editor() {
                     {msg.content}
                     {msg.docx_file && (
                       <div className="mt-1 text-sm text-blue-600 cursor-pointer">
-                        <a href={`http://127.0.0.1:8000/api/download/${msg.docx_file}`} target="_blank" rel="noreferrer">
+                        <a href={`/api/download/${msg.docx_file}`} target="_blank" rel="noreferrer">
                           下载 DOCX
                         </a>
                       </div>

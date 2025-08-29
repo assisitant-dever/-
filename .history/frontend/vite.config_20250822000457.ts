@@ -16,7 +16,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000', // 👈 你的 FastAPI 后端地址
+        target: '', // 👈 你的 FastAPI 后端地址
         changeOrigin: true,              // 允许跨域
         secure: false,                   // 不验证 HTTPS 证书
       },
