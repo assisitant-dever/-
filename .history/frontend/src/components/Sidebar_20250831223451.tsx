@@ -9,12 +9,10 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
   const { state, dispatch } = useApp();
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const toggleButtonRef = useRef<HTMLDivElement>(null);
-  const headerRef = useRef<HTMLDivElement>(null);
+  const toggleButtonRef = useRef<HTMLButtonElement>(null);
   
-  // 状态管理
-  const [isOpen, setIsOpen] = useState(true);
-  const [isMobile, setIsMobile] = useState(false);
+  // 状态管理 - 简化逻辑
+  const [isOpen, setIsOpen] = useState(true); // 电脑端默认展开
   const [searchTerm, setSearchTerm] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -24,57 +22,21 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
     message: string;
     type: 'success' | 'error' | 'info';
   }>({ visible: false, message: '', type: 'info' });
+  
+  // 设备状态
+  const [isMobile, setIsMobile] = useState(false);
 
-  // 切换侧边栏状态
+  // 显示提示消息
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ visible: true, message, type });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  }, []);
+
+  // 切换侧边栏展开/收起 - 简化版，确保状态切换可靠
   const toggleSidebar = useCallback(() => {
-    setIsOpen(!isOpen);
-  }, [isOpen]);
-
-  // 实时计算按钮位置，解决F12调试时的失位问题
-  useEffect(() => {
-    const updateButtonPosition = () => {
-      if (toggleButtonRef.current && headerRef.current && sidebarRef.current) {
-        const headerRect = headerRef.current.getBoundingClientRect();
-        const sidebarRect = sidebarRef.current.getBoundingClientRect();
-        
-        // 计算相对于视口的精确位置
-        const buttonStyle = toggleButtonRef.current.style;
-        
-        if (isOpen) {
-          // 展开状态：定位在头部右侧中间
-          buttonStyle.left = `${sidebarRect.left + sidebarRect.width - 32}px`;
-          buttonStyle.top = `${headerRect.top + headerRect.height / 2}px`;
-          buttonStyle.transform = 'translate(-50%, -50%)';
-        } else {
-          // 收起状态：定位在左侧中间
-          buttonStyle.left = '0';
-          buttonStyle.top = '50%';
-          buttonStyle.transform = 'translateY(-50%)';
-        }
-      }
-    };
-
-    // 初始化位置
-    updateButtonPosition();
-    
-    // 监听窗口变化和侧边栏状态变化，实时更新位置
-    const handleResize = () => {
-      updateButtonPosition();
-    };
-    
-    window.addEventListener('resize', handleResize);
-    const sidebarObserver = new ResizeObserver(entries => {
-      updateButtonPosition();
-    });
-    
-    if (sidebarRef.current) {
-      sidebarObserver.observe(sidebarRef.current);
-    }
-    
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      sidebarObserver.disconnect();
-    };
+    const newState = !isOpen;
+    setIsOpen(newState);
+    console.log("侧边栏状态已切换为:", newState);
   }, [isOpen]);
 
   // 检测设备类型
@@ -82,30 +44,52 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
     const checkDevice = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
-      if (mobile && isOpen) setIsOpen(false);
+      
+      // 移动端默认收起
+      if (mobile && isOpen) {
+        setIsOpen(false);
+      }
     };
+
     checkDevice();
     const resizeHandler = () => checkDevice();
     window.addEventListener('resize', resizeHandler);
+    
     return () => window.removeEventListener('resize', resizeHandler);
   }, [isOpen]);
 
-  // 绑定按钮点击事件
+  // 关键修复：直接绑定原生点击事件
   useEffect(() => {
     if (toggleButtonRef.current) {
-      const button = toggleButtonRef.current;
-      const handleClick = () => toggleSidebar();
-      button.addEventListener('click', handleClick);
-      return () => button.removeEventListener('click', handleClick);
+      // 移除可能存在的旧事件监听
+      const oldHandler = toggleButtonRef.current.onclick;
+      if (oldHandler) {
+        toggleButtonRef.current.removeEventListener('click', oldHandler);
+      }
+      
+      // 添加新的事件监听
+      const handleClick = () => {
+        console.log("展开按钮原生点击事件触发");
+        toggleSidebar();
+      };
+      
+      toggleButtonRef.current.addEventListener('click', handleClick);
+      
+      // 确保按钮样式正确
+      Object.assign(toggleButtonRef.current.style, {
+        display: 'flex',
+        pointerEvents: 'auto',
+        zIndex: '9999',
+        cursor: 'pointer'
+      });
+      
+      return () => {
+        toggleButtonRef.current?.removeEventListener('click', handleClick);
+      };
     }
   }, [toggleSidebar]);
 
-  // 功能方法
-  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    setToast({ visible: true, message, type });
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
-  }, []);
-
+  // 其他功能方法保持不变...
   const fetchConvs = async () => {
     setLoading(true);
     try {
@@ -124,11 +108,14 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
     try {
       const res = await api.post("/api/conversations", { title: "新对话" });
       const newConversation = res.data;
+
       const updatedConvs = Array.isArray(state.conversations)
         ? [...state.conversations, newConversation]
         : [newConversation];
+
       dispatch({ type: "SET_CONVS", payload: updatedConvs });
       dispatch({ type: "SET_CURRENT_CONV", payload: newConversation });
+      
       navigate(`/core/${newConversation.id}`);
       onSelect(newConversation);
       showToast("新建对话成功", "success");
@@ -142,11 +129,13 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
 
   const deleteConv = async (id: number) => {
     if (!window.confirm("确定要删除这个对话吗？")) return;
+    
     setLoading(true);
     try {
       await api.delete(`/api/conversations/${id}`);
       fetchConvs();
       showToast("对话已删除", "success");
+      
       if (state.currentConv?.id === id) {
         navigate("/home");
         onSelect(null);
@@ -163,7 +152,10 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
     dispatch({ type: "SET_CURRENT_CONV", payload: c });
     onSelect(c);
     navigate(`/core/${c.id}`);
-    if (isMobile) setIsOpen(false);
+    
+    if (isMobile) {
+      setIsOpen(false);
+    }
   };
 
   const startEdit = (e: React.MouseEvent, c: any) => {
@@ -174,6 +166,7 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
 
   const saveEdit = async () => {
     if (!editingId || !editTitle.trim()) return;
+
     setLoading(true);
     try {
       await api.patch(`/api/conversations/${editingId}`, { title: editTitle.trim() });
@@ -199,26 +192,26 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
   }, []);
 
   return (
-    <div className="h-full flex overflow-hidden relative box-sizing: border-box;">
-      {/* 侧边栏主体 - 解决空间占用问题 */}
+    <div 
+      ref={sidebarRef}
+      className="h-full flex overflow-hidden relative"
+    >
+      {/* 侧边栏主体 */}
       <div
-        ref={sidebarRef}
-        className={`bg-gray-50 border-r border-gray-200 flex flex-col transition-all duration-500 ease-in-out ${
-          isOpen ? 'w-[260px] opacity-100' : 'w-0 opacity-0'
+        className={`bg-gray-50 border-r border-gray-200 transition-all duration-300 ease-in-out flex flex-col ${
+          isOpen ? 'w-[260px]' : 'w-0'
         }`}
-        style={{
-          // 关键修复：使用transform代替width变化来减少回流
-          transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
-          position: 'relative',
-          flexShrink: 0, // 防止被压缩
-          boxSizing: 'border-box', // 确保padding不增加总宽度
-          overflow: 'hidden', // 防止内容溢出
-        }}
       >
         {/* 侧边栏头部 */}
-        <div ref={headerRef} className="p-3 border-b border-gray-200 flex items-center justify-between h-12 box-sizing: border-box;">
+        <div className="p-3 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-800">对话记录</h2>
-          <div className="w-8 h-8"></div>
+          <button
+            onClick={toggleSidebar}
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200"
+            title="收起侧边栏"
+          >
+            ◀
+          </button>
         </div>
 
         {/* 搜索框 */}
@@ -256,7 +249,7 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
               {filteredConversations.map((c) => (
                 <div
                   key={c.id}
-                  className={`p-2 rounded-md cursor-pointer text-sm break-words transition-all duration-200
+                  className={`p-2 rounded-md cursor-pointer text-sm break-words
                     ${c.id === state.currentConv?.id
                       ? "bg-blue-50 border-l-2 border-blue-500"
                       : "bg-white hover:bg-gray-100"
@@ -292,21 +285,21 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
                         {c.title}
                       </span>
                       <div className="flex gap-1 opacity-0 hover:opacity-100">
-                        <div
+                        <button
                           onClick={(e) => startEdit(e, c)}
-                          className="text-gray-500 hover:text-gray-700 text-xs p-1 cursor-pointer"
+                          className="text-gray-500 hover:text-gray-700 text-xs p-1"
                           aria-label="编辑"
                         >
                           ✏️
-                        </div>
-                        <div
+                        </button>
+                        <button
                           onClick={(e) => { e.stopPropagation(); deleteConv(c.id); }}
-                          className="text-red-500 hover:text-red-700 text-xs p-1 cursor-pointer"
+                          className="text-red-500 hover:text-red-700 text-xs p-1"
                           aria-label="删除"
                           disabled={loading}
                         >
                           {loading ? "..." : "✖"}
-                        </div>
+                        </button>
                       </div>
                     </div>
                   )}
@@ -322,59 +315,35 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
 
         {/* 底部链接 */}
         <div className="p-3 border-t border-gray-200">
-          <div
+          <button
             onClick={() => navigate("/home")}
-            className="text-xs text-blue-600 hover:underline cursor-pointer"
+            className="text-xs text-blue-600 hover:underline"
           >
             ← 返回主页
-          </div>
+          </button>
         </div>
       </div>
 
-      {/* 智能切换按钮 - 解决F12调试失位问题 */}
-      <div
-        ref={toggleButtonRef}
-        className="sidebar-toggle-button"
-        title={isOpen ? "收起侧边栏" : "展开侧边栏"}
-        aria-label={isOpen ? "收起侧边栏" : "展开侧边栏"}
-        style={{
-          // 基础样式
-          width: isOpen ? '32px' : '40px',
-          height: isOpen ? '32px' : '100px',
-          backgroundColor: '#2563eb',
-          color: 'white',
-          border: 'none',
-          borderRadius: isOpen ? '6px' : '0 12px 12px 0',
-          boxShadow: isOpen ? 'none' : '0 4px 12px rgba(0,0,0,0.15)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          zIndex: 9998,
-          position: 'fixed', // 使用fixed确保在视口中的位置稳定
-          boxSizing: 'border-box', // 确保尺寸计算正确
-        }}
-      >
-        <span className="toggle-icon" style={{
-          transform: isOpen ? 'rotate(0deg)' : 'rotate(360deg)',
-          fontSize: isOpen ? '16px' : '20px',
-          transition: 'transform 0.5s ease',
-        }}>
-          {isOpen ? '◀' : '▶'}
-        </span>
+      {/* 展开按钮 - 关键修复 */}
+      {!isOpen && (
+        <button
+          ref={toggleButtonRef}
+          // 保留React点击事件作为备份
+          onClick={toggleSidebar}
+          className="expand-sidebar-button"
+          title="展开侧边栏"
+          aria-label="展开侧边栏"
+        >
+          ➡
+        </button>
+      )}
+
+      {/* 主内容区域占位 */}
+      <div className={`transition-all duration-300 ${isOpen ? 'ml-[260px]' : 'ml-0'} flex-1`}>
+        {/* 主内容区域 */}
       </div>
 
-      {/* 主内容区域 - 解决空间占用问题 */}
-      <div 
-        className={`transition-all duration-500 ease-in-out flex-1`}
-        style={{
-          marginLeft: isOpen ? '260px' : '0',
-          boxSizing: 'border-box',
-        }}
-      ></div>
-
-      {/* Toast组件 */}
+      {/* Toast通知组件 */}
       <Toast
         visible={toast.visible}
         message={toast.message}
@@ -382,17 +351,41 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
         onClose={() => setToast(prev => ({ ...prev, visible: false }))}
       />
 
-      {/* 全局样式修复 */}
+      {/* 关键样式 - 确保按钮可点击 */}
       <style jsx global>{`
-        /* 确保所有元素使用border-box计算尺寸 */
-        * {
-          box-sizing: border-box !important;
+        /* 全局样式，优先级最高 */
+        .expand-sidebar-button {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          width: 40px !important;
+          height: 40px !important;
+          position: absolute !important;
+          left: 0 !important;
+          top: 50% !important;
+          transform: translateY(-50%) !important;
+          background-color: #2563eb !important;
+          color: white !important;
+          border: none !important;
+          border-radius: 0 50% 50% 0 !important;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.2) !important;
+          cursor: pointer !important;
+          z-index: 9999 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          opacity: 1 !important;
+          pointer-events: auto !important;
         }
-        
-        .sidebar-toggle-button:hover {
+
+        .expand-sidebar-button:hover {
           background-color: #1d4ed8 !important;
         }
-        
+
+        /* 确保没有其他样式干扰 */
+        .expand-sidebar-button * {
+          pointer-events: none !important;
+        }
+
         .animate-pulse {
           animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
@@ -400,11 +393,6 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
-        }
-        
-        /* 防止滚动条导致的布局偏移 */
-        html {
-          overflow-x: hidden;
         }
       `}</style>
     </div>

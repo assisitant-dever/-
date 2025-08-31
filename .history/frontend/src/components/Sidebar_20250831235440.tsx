@@ -357,11 +357,11 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
         }}
       >
         <span className="toggle-icon" style={{
-          transform: isOpen ? 'rotate(0deg)' : 'rotate(360deg)',
+          transform: isOpen ? 'rotate(0deg)' : 'rotate(180deg)',
           fontSize: isOpen ? '16px' : '20px',
           transition: 'transform 0.5s ease',
         }}>
-          {isOpen ? '◀' : '▶'}
+          {isOpen ? '◀' : '◀'}
         </span>
       </div>
 

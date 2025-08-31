@@ -10,7 +10,6 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const toggleButtonRef = useRef<HTMLDivElement>(null);
-  const headerRef = useRef<HTMLDivElement>(null);
   
   // 状态管理
   const [isOpen, setIsOpen] = useState(true);
@@ -25,56 +24,9 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
     type: 'success' | 'error' | 'info';
   }>({ visible: false, message: '', type: 'info' });
 
-  // 切换侧边栏状态
+  // 切换边栏展开/收起
   const toggleSidebar = useCallback(() => {
     setIsOpen(!isOpen);
-  }, [isOpen]);
-
-  // 实时计算按钮位置，解决F12调试时的失位问题
-  useEffect(() => {
-    const updateButtonPosition = () => {
-      if (toggleButtonRef.current && headerRef.current && sidebarRef.current) {
-        const headerRect = headerRef.current.getBoundingClientRect();
-        const sidebarRect = sidebarRef.current.getBoundingClientRect();
-        
-        // 计算相对于视口的精确位置
-        const buttonStyle = toggleButtonRef.current.style;
-        
-        if (isOpen) {
-          // 展开状态：定位在头部右侧中间
-          buttonStyle.left = `${sidebarRect.left + sidebarRect.width - 32}px`;
-          buttonStyle.top = `${headerRect.top + headerRect.height / 2}px`;
-          buttonStyle.transform = 'translate(-50%, -50%)';
-        } else {
-          // 收起状态：定位在左侧中间
-          buttonStyle.left = '0';
-          buttonStyle.top = '50%';
-          buttonStyle.transform = 'translateY(-50%)';
-        }
-      }
-    };
-
-    // 初始化位置
-    updateButtonPosition();
-    
-    // 监听窗口变化和侧边栏状态变化，实时更新位置
-    const handleResize = () => {
-      updateButtonPosition();
-    };
-    
-    window.addEventListener('resize', handleResize);
-    const sidebarObserver = new ResizeObserver(entries => {
-      updateButtonPosition();
-    });
-    
-    if (sidebarRef.current) {
-      sidebarObserver.observe(sidebarRef.current);
-    }
-    
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      sidebarObserver.disconnect();
-    };
   }, [isOpen]);
 
   // 检测设备类型
@@ -90,17 +42,19 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
     return () => window.removeEventListener('resize', resizeHandler);
   }, [isOpen]);
 
-  // 绑定按钮点击事件
+  // 绑定点击事件
   useEffect(() => {
     if (toggleButtonRef.current) {
       const button = toggleButtonRef.current;
+      
       const handleClick = () => toggleSidebar();
       button.addEventListener('click', handleClick);
+      
       return () => button.removeEventListener('click', handleClick);
     }
   }, [toggleSidebar]);
 
-  // 功能方法
+  // 其他功能方法保持不变
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ visible: true, message, type });
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
@@ -199,26 +153,31 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
   }, []);
 
   return (
-    <div className="h-full flex overflow-hidden relative box-sizing: border-box;">
-      {/* 侧边栏主体 - 解决空间占用问题 */}
+    <div className="h-full flex overflow-hidden relative">
+      {/* 侧边栏主体 - 实现收缩时向中间靠拢的动画 */}
       <div
         ref={sidebarRef}
         className={`bg-gray-50 border-r border-gray-200 flex flex-col transition-all duration-500 ease-in-out ${
           isOpen ? 'w-[260px] opacity-100' : 'w-0 opacity-0'
         }`}
         style={{
-          // 关键修复：使用transform代替width变化来减少回流
-          transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
-          position: 'relative',
-          flexShrink: 0, // 防止被压缩
-          boxSizing: 'border-box', // 确保padding不增加总宽度
-          overflow: 'hidden', // 防止内容溢出
+          // 关键动画：收起时向中间收缩
+          transformOrigin: isOpen ? 'left center' : 'center center',
+          transitionProperty: 'width, opacity, transform',
+          transform: isOpen ? 'scaleX(1)' : 'scaleX(0.5) translateX(-50%)',
         }}
       >
         {/* 侧边栏头部 */}
-        <div ref={headerRef} className="p-3 border-b border-gray-200 flex items-center justify-between h-12 box-sizing: border-box;">
+        <div className="p-3 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-800">对话记录</h2>
-          <div className="w-8 h-8"></div>
+          <div
+            onClick={toggleSidebar}
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 cursor-pointer transition-transform duration-300"
+            title="收起侧边栏"
+            style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-180deg)' }}
+          >
+            ◀
+          </div>
         </div>
 
         {/* 搜索框 */}
@@ -331,48 +290,28 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
         </div>
       </div>
 
-      {/* 智能切换按钮 - 解决F12调试失位问题 */}
+      {/* 展开/收起按钮 - 与侧边栏动画同步 */}
       <div
         ref={toggleButtonRef}
         className="sidebar-toggle-button"
         title={isOpen ? "收起侧边栏" : "展开侧边栏"}
         aria-label={isOpen ? "收起侧边栏" : "展开侧边栏"}
         style={{
-          // 基础样式
-          width: isOpen ? '32px' : '40px',
-          height: isOpen ? '32px' : '100px',
-          backgroundColor: '#2563eb',
-          color: 'white',
-          border: 'none',
-          borderRadius: isOpen ? '6px' : '0 12px 12px 0',
-          boxShadow: isOpen ? 'none' : '0 4px 12px rgba(0,0,0,0.15)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          zIndex: 9998,
-          position: 'fixed', // 使用fixed确保在视口中的位置稳定
-          boxSizing: 'border-box', // 确保尺寸计算正确
+          // 按钮位置动画：与侧边栏同步过渡
+          left: isOpen ? '260px' : '0',
+          opacity: isOpen ? '0.8' : '1',
+          transform: isOpen ? 'translateY(-50%) scale(0.9)' : 'translateY(-50%) scale(1)',
         }}
       >
         <span className="toggle-icon" style={{
-          transform: isOpen ? 'rotate(0deg)' : 'rotate(360deg)',
-          fontSize: isOpen ? '16px' : '20px',
-          transition: 'transform 0.5s ease',
+          transform: isOpen ? 'rotate(0deg)' : 'rotate(180deg)',
         }}>
           {isOpen ? '◀' : '▶'}
         </span>
       </div>
 
-      {/* 主内容区域 - 解决空间占用问题 */}
-      <div 
-        className={`transition-all duration-500 ease-in-out flex-1`}
-        style={{
-          marginLeft: isOpen ? '260px' : '0',
-          boxSizing: 'border-box',
-        }}
-      ></div>
+      {/* 主内容区域 - 同步过渡 */}
+      <div className={`transition-all duration-500 ease-in-out ${isOpen ? 'ml-[260px]' : 'ml-0'} flex-1`}></div>
 
       {/* Toast组件 */}
       <Toast
@@ -382,31 +321,61 @@ export default function Sidebar({ onSelect }: { onSelect: (c: any) => void }) {
         onClose={() => setToast(prev => ({ ...prev, visible: false }))}
       />
 
-      {/* 全局样式修复 */}
-      <style jsx global>{`
-        /* 确保所有元素使用border-box计算尺寸 */
-        * {
-          box-sizing: border-box !important;
-        }
-        
-        .sidebar-toggle-button:hover {
-          background-color: #1d4ed8 !important;
-        }
-        
-        .animate-pulse {
-          animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        
-        /* 防止滚动条导致的布局偏移 */
-        html {
-          overflow-x: hidden;
-        }
-      `}</style>
+      {/* 动画与样式定义 */}
+      <style>
+        {`
+          /* 侧边栏切换按钮样式 */
+          .sidebar-toggle-button {
+            position: fixed !important;
+            top: 50% !important;
+            width: 40px !important;
+            height: 100px !important;
+            background-color: #2563eb !important;
+            border: none !important;
+            border-radius: 0 12px 12px 0 !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+            cursor: pointer !important;
+            z-index: 9998 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+          }
+          
+          .sidebar-toggle-button:hover {
+            background-color: #1d4ed8 !important;
+            width: 45px !important;
+          }
+          
+          /* 按钮图标样式 */
+          .toggle-icon {
+            color: white !important;
+            font-size: 20px !important;
+            transition: transform 0.5s ease !important;
+          }
+          
+          /* 骨架屏动画 */
+          .animate-pulse {
+            animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+          }
+          
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+          }
+          
+          /* 确保侧边栏内容在收缩时平滑消失 */
+          .sidebar-content {
+            transition: opacity 0.3s ease-in-out 0.1s;
+          }
+          
+          /* 当侧边栏收起时，内容提前淡出 */
+          [class*="w-0"] .sidebar-content {
+            opacity: 0;
+            transition-delay: 0s;
+          }
+        `}
+      </style>
     </div>
   );
 }
