@@ -76,7 +76,7 @@ export default function HomePage() {
               {documents.length === 0 ? <p>暂无历史公文</p> :
                 documents.map(d => (
                   <li key={d}>
-                    <a href={`http://127.0.0.1:8000/api/download/${encodeURIComponent(d)}`} 
+                    <a href={`/api/download/${encodeURIComponent(d)}`} 
                       target="_blank" rel="noreferrer"
                       className="text-blue-500 hover:underline">{d}</a>
                   </li>

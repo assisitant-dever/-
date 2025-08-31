@@ -1,0 +1,24 @@
+# 虚拟环境（必删！服务器需重新创建）
+venv/
+env/
+.env/
+
+# 依赖缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 数据库文件（本地 SQLite 等，服务器用独立数据库）
+db.sqlite3
+*.db
+
+# 日志/临时文件
+logs/
+tmp/
+
+# 敏感配置（密钥、数据库密码等，服务器单独配置）
+config/private_key.json
+*AccessKey.csv  # 忽略密钥文件
+*.key                  # 忽略所有 .key 后缀的密钥文件
+.env                   # 忽略环境变量文件
