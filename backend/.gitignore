@@ -18,7 +18,13 @@ logs/
 tmp/
 
 # 敏感配置（密钥、数据库密码等，服务器单独配置）
+<<<<<<< HEAD
 config/private_key.json
 *AccessKey.csv  # 忽略密钥文件
 *.key                  # 忽略所有 .key 后缀的密钥文件
 .env                   # 忽略环境变量文件
+=======
+.env
+config/private_key.json
+
+>>>>>>> 6aca6465fda5d01cefc898cccf2630c5e7fa1de1
