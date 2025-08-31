@@ -5,8 +5,6 @@ from .encryption import decrypt_api_key
 from .models import AIModel, Conversation 
 from sqlalchemy.orm import Session
 from typing import Optional, Dict,Iterator,Union
-import requests
-import json
 # 加载环境变量
 load_dotenv()
 
@@ -176,121 +174,223 @@ class AnthropicClient(BaseAIClient):
                 if event.type == "content_block_delta":
                     # 提取流式片段
                     yield event.delta.text
-# 百度文心一言/千帆客户端实现
-class ErnieClient(BaseAIClient):
-    # 实现抽象基类要求的__init__方法
-    def __init__(self, api_key: str, base_url: str = None, model: str = None):
-        # 初始化基类未实现的属性
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model = model or self._get_default_model()  # 使用默认模型（如果未指定）
-        self.client = self._initialize_client()  # 初始化请求客户端
 
+# Gemini客户端实现
+class GeminiClient(BaseAIClient):
     def _get_default_model(self) -> str:
-        """返回默认模型，使用百度千帆上的deepseek模型作为示例"""
-        return "deepseek-v3.1-250821"
+        return "gemini-pro"
 
     def _initialize_client(self):
-        """初始化请求会话，设置超时和连接池管理"""
-        session = requests.Session()
-        # 设置超时时间：连接超时10秒，读取超时30秒
-        session.timeout = (10, 30)
-        # 配置连接池，提高复用率
-        session.mount('https://', requests.adapters.HTTPAdapter(
-            pool_connections=10,
-            pool_maxsize=10,
-            pool_block=False
-        ))
-        return session
-
-    def _get_request_headers(self) -> dict:
-        """构建请求头"""
-        return {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}'
-        }
-
-    def _get_api_endpoint(self) -> str:
-        """获取API端点URL"""
-        if self.base_url:
-            return self.base_url
-        return "https://qianfan.baidubce.com/v2/chat/completions"
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            return genai.GenerativeModel(self.model)
+        except ImportError:
+            raise ImportError("请安装Google Generative AI SDK: pip install google-generativeai")
 
     def generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
-        """全量生成文本"""
-        url = self._get_api_endpoint()
-        headers = self._get_request_headers()
-        
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        }
-
-        try:
-            response = self.client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            result = response.json()
-            
-            if result.get("choices") and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"]
-            
-            raise RuntimeError("百度API返回为空，未包含choices字段")
-            
-        except Exception as e:
-            raise RuntimeError(f"全量生成错误: {str(e)}") from e
+        # Gemini将system prompt和user prompt合并处理
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        response = self.client.generate_content(full_prompt)
+        return response.text
 
     def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> Iterator[str]:
-        """流式生成文本"""
-        url = self._get_api_endpoint()
-        headers = self._get_request_headers()
+        """流式生成（Google Gemini）"""
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        response = self.client.generate_content(full_prompt, stream=True)  # 开启流式
+        for chunk in response:
+            if chunk.text:  # 过滤空内容
+                yield chunk.text
+# AI客户端工厂类
+class AIClientFactory:
+    SUPPORTED_PROVIDERS = {
+        "openai": OpenAIClient,
+        "qwen": QwenClient,
+        "anthropic": AnthropicClient,
+        "gemini": GeminiClient,
+    }
+
+    @classmethod
+    def get_supported_providers(cls) -> list:
+        """返回支持的平台列表"""
+        return list(cls.SUPPORTED_PROVIDERS.keys())
+
+    @classmethod
+    def create_client(cls, provider: str, api_key: str, base_url: str = None, model: str = None):
+        """创建指定平台的客户端实例"""
+        provider = provider.lower()
+        if provider not in cls.SUPPORTED_PROVIDERS:
+            raise ValueError(f"不支持的平台: {provider}，支持的平台: {cls.get_supported_providers()}")
         
-        payload = {
-            "model": self.model,
-            "messages": [
+        client_class = cls.SUPPORTED_PROVIDERS[provider]
+        try:
+            return client_class(api_key=api_key, base_url=base_url, model=model)
+        except Exception as e:
+            raise RuntimeError(f"初始化{provider}客户端失败: {str(e)}") from e
+
+
+# 基于环境变量的默认生成函数（向后兼容）
+def generate_text(prompt: str) -> str:
+    """使用环境变量配置的默认Qwen模型生成文本"""
+    qwen_api_key = os.getenv("QWEN_API_KEY")
+    qwen_api_url = os.getenv("QWEN_API_URL")
+    qwen_model = os.getenv("QWEN_MODEL") or "qwen-plus"
+
+    if not qwen_api_key or not qwen_api_url:
+        raise ValueError("请在.env配置QWEN_API_URL和QWEN_API_KEY")
+
+    try:
+        client = QwenClient(
+            api_key=qwen_api_key,
+            base_url=qwen_api_url,
+            model=qwen_model
+        )
+        return client.generate(prompt)
+    except Exception as e:
+        raise RuntimeError(f"生成文本失败: {str(e)}") from e
+
+
+# 用户级生成函数
+def generate_text_for_user(
+    user_id: int, 
+    prompt: str, 
+    system_prompt: str = None, 
+    db: Session = None,
+    stream: bool = False  # 新增：是否流式输出
+) -> Union[str, Iterator[str]]:
+    """根据用户配置生成文本（支持流式/全量）"""
+    if db is None:
+        raise ValueError("必须提供数据库会话对象(db)")
+    
+    user_config = get_user_model_preference(user_id, db)
+    if not user_config:
+        raise ValueError("用户未设置AI模型偏好")
+
+    try:
+        client = AIClientFactory.create_client(
+            provider=user_config["provider"],
+            api_key=user_config["api_key"],
+            base_url=user_config.get("base_url"),
+            model=user_config.get("model_name")
+        )
+        
+        if stream:
+            try:
+                # ✅ 捕获stream_generate的异常
+                return client.stream_generate(prompt=prompt, system_prompt=system_prompt)
+            except Exception as stream_e:
+                raise RuntimeError(f"流式生成过程中失败: {str(stream_e)}") from stream_e
+        else:
+            return client.generate(...)
+    except Exception as e:
+        # 确保错误信息包含具体原因
+        raise RuntimeError(f"生成文本失败: {str(e)}") from e
+
+
+
+
+def get_user_model_preference(user_id: int, db: Session) -> Optional[Dict]:
+    """
+    从数据库获取用户的AI模型偏好配置
+    """
+    # 导入需要的模型（确保已定义Platform模型）
+    from .models import Platform,Model  # 新增导入
+    
+    # 第一步：优先查询用户上次使用的AI模型
+    latest_conversation = db.query(Conversation).filter(
+        Conversation.user_id == user_id
+    ).order_by(
+        Conversation.updated_at.desc()
+    ).first()
+    
+    if latest_conversation:
+        # 预加载完整关联链：AIModel → Model → Platform
+        last_used_ai_model = db.query(AIModel).filter(
+            AIModel.id == latest_conversation.ai_model_id,
+            AIModel.user_id == user_id
+        ).join(
+            AIModel.model  # 关联到Model
+        ).join(
+            Model.platform  # 关联到Platform
+        ).first()
+        
+        if last_used_ai_model:
+            return {
+                # 通过Platform模型获取名称
+                "provider": last_used_ai_model.model.platform.name,
+                "api_key": last_used_ai_model.api_key,
+                "model_name": last_used_ai_model.model.name,
+                "base_url": last_used_ai_model.base_url
+            }
+    
+    # 第二步：若无使用记录，取用户最新添加的AI模型
+    latest_added_ai_model = db.query(AIModel).filter(
+        AIModel.user_id == user_id
+    ).join(
+        AIModel.model
+    ).join(
+        Model.platform
+    ).order_by(
+        AIModel.created_at.desc()
+    ).first()
+    
+    if not latest_added_ai_model:
+        return None
+    
+    # 第三步：格式化返回
+    return {
+        # 通过Platform模型获取名称
+        "provider": latest_added_ai_model.model.platform.name,
+        "api_key": latest_added_ai_model.api_key,
+        "model_name": latest_added_ai_model.model.name,
+        "base_url": latest_added_ai_model.base_url
+    }
+class ErnieClient(BaseAIClient):
+    def _get_default_model(self) -> str:
+        """文心一言默认模型：ernie-bot-4（旗舰版）"""
+        return "ernie-bot-4"
+
+    def _initialize_client(self):
+        """初始化文心一言客户端（基于OpenAI兼容接口）"""
+        try:
+            from openai import OpenAI
+            # 文心一言兼容接口地址：https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro
+            default_base_url = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro"
+            return OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url or default_base_url
+            )
+        except ImportError:
+            raise ImportError("请安装OpenAI SDK: pip install openai")
+
+    def generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
+        """全量生成（文心一言兼容接口）"""
+        completion = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            "stream": True
-        }
+            temperature=0.7  # 文心一言默认温度值
+        )
+        # 文心一言返回格式与OpenAI一致，直接提取content
+        return completion.choices[0].message.content
 
-        try:
-            with self.client.post(url, headers=headers, json=payload, stream=True) as response:
-                response.raise_for_status()
-                
-                for line in response.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    
-                    line = line.lstrip("data: ").strip()
-                    if line == "[DONE]":
-                        break
-                    
-                    if not line:
-                        continue
-                    
-                    try:
-                        chunk = json.loads(line)
-                        if "error" in chunk:
-                            raise RuntimeError(f"流式错误: {chunk['error']['message']}")
-                            
-                        if (chunk.get("choices") and 
-                            len(chunk["choices"]) > 0 and 
-                            chunk["choices"][0].get("delta") and 
-                            "content" in chunk["choices"][0]["delta"]):
-                            
-                            content = chunk["choices"][0]["delta"]["content"]
-                            if content:
-                                yield content
-                                
-                    except json.JSONDecodeError:
-                        continue
-                        
-        except Exception as e:
-            raise RuntimeError(f"流式生成错误: {str(e)}") from e
-
+    def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> Iterator[str]:
+        """流式生成（文心一言兼容接口）"""
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            stream=True  # 开启流式
+        )
+        for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content and len(content.strip()) > 0:  # 过滤空片段
+                yield content
 
 class SparkClient(BaseAIClient):
     def _get_default_model(self) -> str:
@@ -464,177 +564,3 @@ class LLaMAClient(BaseAIClient):
         for token in stream:
             if token and not token.endswith("</s>"):  # 过滤结束标记
                 yield token
-# Gemini客户端实现
-class GeminiClient(BaseAIClient):
-    def _get_default_model(self) -> str:
-        return "gemini-pro"
-
-    def _initialize_client(self):
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            return genai.GenerativeModel(self.model)
-        except ImportError:
-            raise ImportError("请安装Google Generative AI SDK: pip install google-generativeai")
-
-    def generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
-        # Gemini将system prompt和user prompt合并处理
-        full_prompt = f"{system_prompt}\n\n{prompt}"
-        response = self.client.generate_content(full_prompt)
-        return response.text
-
-    def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> Iterator[str]:
-        """流式生成（Google Gemini）"""
-        full_prompt = f"{system_prompt}\n\n{prompt}"
-        response = self.client.generate_content(full_prompt, stream=True)  # 开启流式
-        for chunk in response:
-            if chunk.text:  # 过滤空内容
-                yield chunk.text
-# AI客户端工厂类
-class AIClientFactory:
-    SUPPORTED_PROVIDERS = {
-        "openai": OpenAIClient,
-        "qwen": QwenClient,
-        "anthropic": AnthropicClient,
-        "gemini": GeminiClient,
-        "ernie": ErnieClient,    # 百度文心一言
-        "spark": SparkClient,    # 讯飞星火
-        "glm": GLMClient,        # 智谱GLM-4
-        "llama": LLaMAClient     # Meta LLaMA 2
-    }
-
-    @classmethod
-    def get_supported_providers(cls) -> list:
-        """返回支持的平台列表"""
-        return list(cls.SUPPORTED_PROVIDERS.keys())
-
-    @classmethod
-    def create_client(cls, provider: str, api_key: str, base_url: str = None, model: str = None):
-        """创建指定平台的客户端实例"""
-        provider = provider.lower()
-        if provider not in cls.SUPPORTED_PROVIDERS:
-            raise ValueError(f"不支持的平台: {provider}，支持的平台: {cls.get_supported_providers()}")
-        
-        client_class = cls.SUPPORTED_PROVIDERS[provider]
-        try:
-            return client_class(api_key=api_key, base_url=base_url, model=model)
-        except Exception as e:
-            raise RuntimeError(f"初始化{provider}客户端失败: {str(e)}") from e
-
-
-# 基于环境变量的默认生成函数（向后兼容）
-def generate_text(prompt: str) -> str:
-    """使用环境变量配置的默认Qwen模型生成文本"""
-    qwen_api_key = os.getenv("QWEN_API_KEY")
-    qwen_api_url = os.getenv("QWEN_API_URL")
-    qwen_model = os.getenv("QWEN_MODEL") or "qwen-plus"
-
-    if not qwen_api_key or not qwen_api_url:
-        raise ValueError("请在.env配置QWEN_API_URL和QWEN_API_KEY")
-
-    try:
-        client = QwenClient(
-            api_key=qwen_api_key,
-            base_url=qwen_api_url,
-            model=qwen_model
-        )
-        return client.generate(prompt)
-    except Exception as e:
-        raise RuntimeError(f"生成文本失败: {str(e)}") from e
-
-
-# 用户级生成函数
-def generate_text_for_user(
-    user_id: int, 
-    prompt: str, 
-    system_prompt: str = None, 
-    db: Session = None,
-    stream: bool = False  # 新增：是否流式输出
-) -> Union[str, Iterator[str]]:
-    """根据用户配置生成文本（支持流式/全量）"""
-    if db is None:
-        raise ValueError("必须提供数据库会话对象(db)")
-    
-    user_config = get_user_model_preference(user_id, db)
-    if not user_config:
-        raise ValueError("用户未设置AI模型偏好")
-
-    try:
-        client = AIClientFactory.create_client(
-            provider=user_config["provider"],
-            api_key=user_config["api_key"],
-            base_url=user_config.get("base_url"),
-            model=user_config.get("model_name")
-        )
-        
-        if stream:
-            try:
-                # ✅ 捕获stream_generate的异常
-                return client.stream_generate(prompt=prompt, system_prompt=system_prompt)
-            except Exception as stream_e:
-                raise RuntimeError(f"流式生成过程中失败: {str(stream_e)}") from stream_e
-        else:
-            return client.generate(prompt=prompt,system_prompt=system_prompt)
-    except Exception as e:
-        # 确保错误信息包含具体原因
-        raise RuntimeError(f"生成文本失败: {str(e)}") from e
-
-
-
-
-def get_user_model_preference(user_id: int, db: Session) -> Optional[Dict]:
-    """
-    从数据库获取用户的AI模型偏好配置
-    """
-    # 导入需要的模型（确保已定义Platform模型）
-    from .models import Platform,Model  # 新增导入
-    
-    # 第一步：优先查询用户上次使用的AI模型
-    latest_conversation = db.query(Conversation).filter(
-        Conversation.user_id == user_id
-    ).order_by(
-        Conversation.updated_at.desc()
-    ).first()
-    
-    if latest_conversation:
-        # 预加载完整关联链：AIModel → Model → Platform
-        last_used_ai_model = db.query(AIModel).filter(
-            AIModel.id == latest_conversation.ai_model_id,
-            AIModel.user_id == user_id
-        ).join(
-            AIModel.model  # 关联到Model
-        ).join(
-            Model.platform  # 关联到Platform
-        ).first()
-        
-        if last_used_ai_model:
-            return {
-                # 通过Platform模型获取名称
-                "provider": last_used_ai_model.model.platform.name,
-                "api_key": last_used_ai_model.api_key,
-                "model_name": last_used_ai_model.model.name,
-                "base_url": last_used_ai_model.base_url
-            }
-    
-    # 第二步：若无使用记录，取用户最新添加的AI模型
-    latest_added_ai_model = db.query(AIModel).filter(
-        AIModel.user_id == user_id
-    ).join(
-        AIModel.model
-    ).join(
-        Model.platform
-    ).order_by(
-        AIModel.created_at.desc()
-    ).first()
-    
-    if not latest_added_ai_model:
-        return None
-    
-    # 第三步：格式化返回
-    return {
-        # 通过Platform模型获取名称
-        "provider": latest_added_ai_model.model.platform.name,
-        "api_key": latest_added_ai_model.api_key,
-        "model_name": latest_added_ai_model.model.name,
-        "base_url": latest_added_ai_model.base_url
-    }

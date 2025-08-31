@@ -5,8 +5,8 @@ from .encryption import decrypt_api_key
 from .models import AIModel, Conversation 
 from sqlalchemy.orm import Session
 from typing import Optional, Dict,Iterator,Union
-import requests
-import json
+from openai import OpenAI, APIError, APITimeoutError
+
 # 加载环境变量
 load_dotenv()
 
@@ -176,120 +176,116 @@ class AnthropicClient(BaseAIClient):
                 if event.type == "content_block_delta":
                     # 提取流式片段
                     yield event.delta.text
-# 百度文心一言/千帆客户端实现
 class ErnieClient(BaseAIClient):
-    # 实现抽象基类要求的__init__方法
-    def __init__(self, api_key: str, base_url: str = None, model: str = None):
-        # 初始化基类未实现的属性
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model = model or self._get_default_model()  # 使用默认模型（如果未指定）
-        self.client = self._initialize_client()  # 初始化请求客户端
-
     def _get_default_model(self) -> str:
-        """返回默认模型，使用百度千帆上的deepseek模型作为示例"""
-        return "deepseek-v3.1-250821"
+        """文心一言默认模型：ernie-bot-4（旗舰版）"""
+        return "ernie-bot-4"
 
     def _initialize_client(self):
-        """初始化请求会话，设置超时和连接池管理"""
-        session = requests.Session()
-        # 设置超时时间：连接超时10秒，读取超时30秒
-        session.timeout = (10, 30)
-        # 配置连接池，提高复用率
-        session.mount('https://', requests.adapters.HTTPAdapter(
-            pool_connections=10,
-            pool_maxsize=10,
-            pool_block=False
-        ))
-        return session
-
-    def _get_request_headers(self) -> dict:
-        """构建请求头"""
-        return {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}'
-        }
-
-    def _get_api_endpoint(self) -> str:
-        """获取API端点URL"""
-        if self.base_url:
-            return self.base_url
-        return "https://qianfan.baidubce.com/v2/chat/completions"
-
-    def generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
-        """全量生成文本"""
-        url = self._get_api_endpoint()
-        headers = self._get_request_headers()
-        
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        }
-
+        """初始化文心一言客户端（基于OpenAI兼容接口）"""
         try:
-            response = self.client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            result = response.json()
+            # 文心一言兼容接口地址（根据官方文档）
+            default_base_url = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro"
             
-            if result.get("choices") and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"]
-            
-            raise RuntimeError("百度API返回为空，未包含choices字段")
-            
-        except Exception as e:
-            raise RuntimeError(f"全量生成错误: {str(e)}") from e
-
-    def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> Iterator[str]:
-        """流式生成文本"""
-        url = self._get_api_endpoint()
-        headers = self._get_request_headers()
-        
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "stream": True
-        }
-
-        try:
-            with self.client.post(url, headers=headers, json=payload, stream=True) as response:
-                response.raise_for_status()
+            # 处理AK/SK认证（如果提供了secret_key）
+            api_key = self.api_key
+            if hasattr(self, 'secret_key') and self.secret_key:
+                api_key = self._generate_auth_token()
                 
-                for line in response.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
+            return OpenAI(
+                api_key=api_key,
+                base_url=self.base_url or default_base_url,
+                timeout=30.0  # 添加超时设置
+            )
+        except ImportError:
+            raise ImportError("请安装OpenAI SDK: pip install openai")
+
+    def _generate_auth_token(self) -> str:
+        """生成百度API认证Token（当使用AK/SK时）"""
+        # 参考文档：https://cloud.baidu.com/doc/QIANFAN/s/Slkkydake
+        timestamp = str(int(time.time()))
+        sign_str = self.api_key + timestamp
+        signature = hmac.new(
+            self.secret_key.encode('utf-8'),
+            sign_str.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        return f"{self.api_key}:{timestamp}:{signature}"
+
+    def generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.", 
+                 temperature: float = 0.7, top_p: float = 0.95) -> str:
+        """全量生成（文心一言兼容接口）"""
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=temperature,
+                top_p=top_p,
+                # 增加文心一言特有的参数
+                penalty_score=1.0,
+                request_timeout=60
+            )
+            
+            # 检查返回结果是否有效
+            if not completion.choices or not completion.choices[0].message:
+                raise ValueError("文心一言返回空结果")
+                
+            return completion.choices[0].message.content
+        
+        except APIError as e:
+            # 处理API错误
+            error_msg = f"文心一言API错误: {str(e)}"
+            if e.status_code == 401:
+                error_msg += "，可能是API密钥无效或认证失败"
+            elif e.status_code == 429:
+                error_msg += "，请求频率超限，请稍后再试"
+            raise Exception(error_msg) from e
+        except APITimeoutError:
+            raise Exception("文心一言API请求超时") from None
+
+    def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.",
+                        temperature: float = 0.7, top_p: float = 0.95) -> Iterator[str]:
+        """流式生成（文心一言兼容接口）"""
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=temperature,
+                top_p=top_p,
+                penalty_score=1.0,
+                stream=True  # 开启流式
+            )
+            
+            for chunk in stream:
+                # 检查chunk的有效性
+                if not chunk.choices:
+                    continue
                     
-                    line = line.lstrip("data: ").strip()
-                    if line == "[DONE]":
-                        break
+                content = chunk.choices[0].delta.content
+                if content and len(content.strip()) > 0:  # 过滤空片段
+                    yield content
                     
-                    if not line:
-                        continue
-                    
-                    try:
-                        chunk = json.loads(line)
-                        if "error" in chunk:
-                            raise RuntimeError(f"流式错误: {chunk['error']['message']}")
-                            
-                        if (chunk.get("choices") and 
-                            len(chunk["choices"]) > 0 and 
-                            chunk["choices"][0].get("delta") and 
-                            "content" in chunk["choices"][0]["delta"]):
-                            
-                            content = chunk["choices"][0]["delta"]["content"]
-                            if content:
-                                yield content
-                                
-                    except json.JSONDecodeError:
-                        continue
-                        
-        except Exception as e:
-            raise RuntimeError(f"流式生成错误: {str(e)}") from e
+        except APIError as e:
+            error_msg = f"文心一言API流式错误: {str(e)}"
+            raise Exception(error_msg) from e
+        except APITimeoutError:
+            raise Exception("文心一言API流式请求超时") from None
+
+    def set_model(self, model: str) -> None:
+        """设置模型，增加模型校验"""
+        valid_models = [
+            "ernie-bot", "ernie-bot-turbo", "ernie-bot-4",
+            "ernie-speed", "ernie-lite"
+        ]
+        if model not in valid_models and not model.startswith("ernie-"):
+            raise ValueError(f"不支持的文心一言模型: {model}，请使用官方支持的模型名称")
+        self.model = model
 
 
 class SparkClient(BaseAIClient):

@@ -5,8 +5,6 @@ from .encryption import decrypt_api_key
 from .models import AIModel, Conversation 
 from sqlalchemy.orm import Session
 from typing import Optional, Dict,Iterator,Union
-import requests
-import json
 # 加载环境变量
 load_dotenv()
 
@@ -176,120 +174,94 @@ class AnthropicClient(BaseAIClient):
                 if event.type == "content_block_delta":
                     # 提取流式片段
                     yield event.delta.text
-# 百度文心一言/千帆客户端实现
 class ErnieClient(BaseAIClient):
-    # 实现抽象基类要求的__init__方法
-    def __init__(self, api_key: str, base_url: str = None, model: str = None):
-        # 初始化基类未实现的属性
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model = model or self._get_default_model()  # 使用默认模型（如果未指定）
-        self.client = self._initialize_client()  # 初始化请求客户端
-
     def _get_default_model(self) -> str:
-        """返回默认模型，使用百度千帆上的deepseek模型作为示例"""
-        return "deepseek-v3.1-250821"
+        """文心一言默认模型：ernie-bot-4（旗舰版）"""
+        return "ernie-bot-4"  # 对应原生接口的模型名
 
     def _initialize_client(self):
-        """初始化请求会话，设置超时和连接池管理"""
-        session = requests.Session()
-        # 设置超时时间：连接超时10秒，读取超时30秒
-        session.timeout = (10, 30)
-        # 配置连接池，提高复用率
-        session.mount('https://', requests.adapters.HTTPAdapter(
-            pool_connections=10,
-            pool_maxsize=10,
-            pool_block=False
-        ))
-        return session
-
-    def _get_request_headers(self) -> dict:
-        """构建请求头"""
-        return {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}'
-        }
-
-    def _get_api_endpoint(self) -> str:
-        """获取API端点URL"""
-        if self.base_url:
-            return self.base_url
-        return "https://qianfan.baidubce.com/v2/chat/completions"
+        """初始化文心一言客户端（基于百度原生API，使用requests）"""
+        try:
+            import requests
+            return requests.Session()  # 复用连接，提升性能
+        except ImportError:
+            raise ImportError("请安装requests: pip install requests")
 
     def generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
-        """全量生成文本"""
-        url = self._get_api_endpoint()
-        headers = self._get_request_headers()
+        """全量生成（百度原生API）"""
+        # 原生接口地址（从百度云示例复制，注意模型对应的后缀）
+        # 例如：ernie-bot-4对应/completions_pro，基础版对应/ernie_bot
+        base_url = self.base_url or "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro"
         
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        }
+        # 原生接口需要在URL中携带API Key和Secret Key（从百度云获取）
+        # 注意：这里的api_key和secret_key是百度云控制台的"API Key"和"Secret Key"
+        if not self.api_key:
+            raise ValueError("文心一言需要API Key（格式：'API_KEY,SECRET_KEY'）")
+        api_key, secret_key = self.api_key.split(',', 1)  # 从api_key字段拆分
+        url = f"{base_url}?api_key={api_key}&secret_key={secret_key}"
 
-        try:
-            response = self.client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            result = response.json()
-            
-            if result.get("choices") and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"]
-            
-            raise RuntimeError("百度API返回为空，未包含choices字段")
-            
-        except Exception as e:
-            raise RuntimeError(f"全量生成错误: {str(e)}") from e
-
-    def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> Iterator[str]:
-        """流式生成文本"""
-        url = self._get_api_endpoint()
-        headers = self._get_request_headers()
-        
+        # 原生接口的请求体格式（参考百度云示例）
         payload = {
-            "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            "stream": True
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "penalty_score": 1.0,
+            "disable_search": False,  # 是否禁用搜索增强（部分模型支持）
+            "response_format": {"type": "text"}
         }
 
-        try:
-            with self.client.post(url, headers=headers, json=payload, stream=True) as response:
-                response.raise_for_status()
-                
-                for line in response.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    
-                    line = line.lstrip("data: ").strip()
-                    if line == "[DONE]":
+        headers = {"Content-Type": "application/json"}
+        response = self.client.post(url, headers=headers, json=payload)
+        response.raise_for_status()  # 抛出HTTP错误
+        result = response.json()
+        
+        # 原生接口的响应格式解析（参考百度云示例的返回结构）
+        if "error_code" in result:
+            raise RuntimeError(f"文心一言API错误: {result['error_msg']} (错误码: {result['error_code']})")
+        return result.get("result", "")  # 原生接口的文本结果在"result"字段
+
+    def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> Iterator[str]:
+        """流式生成（百度原生API，基于SSE）"""
+        base_url = self.base_url or "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro"
+        
+        if not self.api_key:
+            raise ValueError("文心一言需要API Key（格式：'API_KEY,SECRET_KEY'）")
+        api_key, secret_key = self.api_key.split(',', 1)
+        url = f"{base_url}?api_key={api_key}&secret_key={secret_key}"
+
+        payload = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "stream": True  # 开启流式
+        }
+
+        headers = {"Content-Type": "application/json"}
+        with self.client.post(url, headers=headers, json=payload, stream=True) as response:
+            response.raise_for_status()
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                # 百度原生SSE格式：data: {"id":"...","result":"...","is_end":false}
+                line = line.lstrip("data: ").strip()
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    if "error_code" in chunk:
+                        raise RuntimeError(f"流式错误: {chunk['error_msg']}")
+                    # 流式片段在"result"字段，is_end标记结束
+                    if chunk.get("result"):
+                        yield chunk["result"]
+                    if chunk.get("is_end", False):
                         break
-                    
-                    if not line:
-                        continue
-                    
-                    try:
-                        chunk = json.loads(line)
-                        if "error" in chunk:
-                            raise RuntimeError(f"流式错误: {chunk['error']['message']}")
-                            
-                        if (chunk.get("choices") and 
-                            len(chunk["choices"]) > 0 and 
-                            chunk["choices"][0].get("delta") and 
-                            "content" in chunk["choices"][0]["delta"]):
-                            
-                            content = chunk["choices"][0]["delta"]["content"]
-                            if content:
-                                yield content
-                                
-                    except json.JSONDecodeError:
-                        continue
-                        
-        except Exception as e:
-            raise RuntimeError(f"流式生成错误: {str(e)}") from e
+                except json.JSONDecodeError:
+                    continue
 
 
 class SparkClient(BaseAIClient):

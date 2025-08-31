@@ -5,8 +5,6 @@ from .encryption import decrypt_api_key
 from .models import AIModel, Conversation 
 from sqlalchemy.orm import Session
 from typing import Optional, Dict,Iterator,Union
-import requests
-import json
 # 加载环境变量
 load_dotenv()
 
@@ -178,14 +176,6 @@ class AnthropicClient(BaseAIClient):
                     yield event.delta.text
 # 百度文心一言/千帆客户端实现
 class ErnieClient(BaseAIClient):
-    # 实现抽象基类要求的__init__方法
-    def __init__(self, api_key: str, base_url: str = None, model: str = None):
-        # 初始化基类未实现的属性
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model = model or self._get_default_model()  # 使用默认模型（如果未指定）
-        self.client = self._initialize_client()  # 初始化请求客户端
-
     def _get_default_model(self) -> str:
         """返回默认模型，使用百度千帆上的deepseek模型作为示例"""
         return "deepseek-v3.1-250821"
@@ -194,77 +184,157 @@ class ErnieClient(BaseAIClient):
         """初始化请求会话，设置超时和连接池管理"""
         session = requests.Session()
         # 设置超时时间：连接超时10秒，读取超时30秒
+        # 避免因网络问题导致的无限期等待
         session.timeout = (10, 30)
         # 配置连接池，提高复用率
         session.mount('https://', requests.adapters.HTTPAdapter(
-            pool_connections=10,
-            pool_maxsize=10,
-            pool_block=False
+            pool_connections=10,  # 连接池大小
+            pool_maxsize=10,      # 最大连接数
+            pool_block=False      # 连接池满时不阻塞
         ))
         return session
 
     def _get_request_headers(self) -> dict:
-        """构建请求头"""
+        """构建请求头，参考示例中的Authorization和Content-Type"""
         return {
+            # 内容类型固定为JSON
             'Content-Type': 'application/json',
+            # 授权头格式：Bearer + 访问令牌
             'Authorization': f'Bearer {self.api_key}'
         }
 
     def _get_api_endpoint(self) -> str:
-        """获取API端点URL"""
+        """获取API端点URL，优先使用用户指定的base_url，否则使用默认千帆地址"""
         if self.base_url:
             return self.base_url
+        # 百度千帆API的标准端点
         return "https://qianfan.baidubce.com/v2/chat/completions"
 
     def generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
-        """全量生成文本"""
+        """
+        全量生成文本（非流式）
+        
+        参数:
+            prompt: 用户输入的提示文本
+            system_prompt: 系统提示，用于定义AI助手的行为
+        
+        返回:
+            模型生成的完整文本
+        """
+        # 1. 准备请求参数
         url = self._get_api_endpoint()
         headers = self._get_request_headers()
         
+        # 2. 构建请求体，完全遵循示例中的JSON结构
         payload = {
-            "model": self.model,
+            "model": self.model or self._get_default_model(),
             "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ]
+            # 可根据需要添加其他参数：
+            # "temperature": 0.7,        # 温度参数，控制随机性
+            # "top_p": 0.9,              # 核采样参数
+            # "max_tokens": 2048         # 最大生成 tokens
         }
 
         try:
-            response = self.client.post(url, headers=headers, json=payload)
+            # 3. 发送POST请求，使用json参数自动序列化并设置Content-Type
+            response = self.client.post(
+                url=url,
+                headers=headers,
+                json=payload  # 注意：这里使用json参数而非data，更简洁
+            )
+            
+            # 4. 检查HTTP状态码，非200则抛出异常
             response.raise_for_status()
+            
+            # 5. 解析响应结果
             result = response.json()
             
+            # 6. 提取生成的文本内容
+            # 百度千帆API的响应结构与示例一致
             if result.get("choices") and len(result["choices"]) > 0:
                 return result["choices"][0]["message"]["content"]
             
+            # 处理无结果的情况
             raise RuntimeError("百度API返回为空，未包含choices字段")
             
+        except requests.exceptions.HTTPError as e:
+            # 处理HTTP错误（如401认证失败、404端点错误等）
+            error_msg = f"HTTP请求错误: {str(e)}"
+            # 尝试提取API返回的错误信息
+            if response.content:
+                try:
+                    error_details = response.json()
+                    error_msg += f"，详情: {error_details.get('error', {}).get('message', '未知错误')}"
+                except json.JSONDecodeError:
+                    error_msg += f"，响应内容: {response.text}"
+            raise RuntimeError(error_msg) from e
+            
+        except requests.exceptions.Timeout:
+            # 处理超时错误
+            raise RuntimeError("请求百度API超时，请检查网络连接或稍后重试") from None
+            
+        except json.JSONDecodeError:
+            # 处理JSON解析错误
+            raise RuntimeError(f"百度API返回无效JSON: {response.text}") from None
+            
         except Exception as e:
-            raise RuntimeError(f"全量生成错误: {str(e)}") from e
+            # 处理其他意外错误
+            raise RuntimeError(f"调用百度API时发生错误: {str(e)}") from e
 
     def stream_generate(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> Iterator[str]:
-        """流式生成文本"""
+        """
+        流式生成文本
+        
+        参数:
+            prompt: 用户输入的提示文本
+            system_prompt: 系统提示，用于定义AI助手的行为
+        
+        返回:
+            文本生成的迭代器，每次返回一个片段
+        """
+        # 1. 准备请求参数
         url = self._get_api_endpoint()
         headers = self._get_request_headers()
         
+        # 2. 构建请求体，添加stream=True开启流式
         payload = {
-            "model": self.model,
+            "model": self.model or self._get_default_model(),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            "stream": True
+            "stream": True  # 关键参数：开启流式返回
         }
 
         try:
-            with self.client.post(url, headers=headers, json=payload, stream=True) as response:
-                response.raise_for_status()
+            # 3. 发送流式请求，使用stream=True参数
+            with self.client.post(
+                url=url,
+                headers=headers,
+                json=payload,
+                stream=True  # 启用流式响应
+            ) as response:
+                response.raise_for_status()  # 检查HTTP状态码
                 
+                # 4. 逐行处理流式响应
                 for line in response.iter_lines(decode_unicode=True):
                     if not line:
-                        continue
+                        continue  # 跳过空行
                     
+                    # 百度SSE格式：data: {"id":"...","choices":[...]}
+                    # 移除前缀"data: "
                     line = line.lstrip("data: ").strip()
+                    
+                    # 检查流结束标记
                     if line == "[DONE]":
                         break
                     
@@ -272,25 +342,33 @@ class ErnieClient(BaseAIClient):
                         continue
                     
                     try:
+                        # 解析JSON片段
                         chunk = json.loads(line)
+                        
+                        # 检查是否包含错误信息
                         if "error" in chunk:
-                            raise RuntimeError(f"流式错误: {chunk['error']['message']}")
+                            raise RuntimeError(f"流式生成错误: {chunk['error']['message']}")
                             
+                        # 提取内容片段
                         if (chunk.get("choices") and 
                             len(chunk["choices"]) > 0 and 
                             chunk["choices"][0].get("delta") and 
                             "content" in chunk["choices"][0]["delta"]):
                             
                             content = chunk["choices"][0]["delta"]["content"]
-                            if content:
+                            if content:  # 确保内容不为空
                                 yield content
                                 
                     except json.JSONDecodeError:
+                        # 忽略无效的JSON片段
                         continue
                         
+        except requests.exceptions.HTTPError as e:
+            raise RuntimeError(f"流式请求HTTP错误: {str(e)}") from e
+        except requests.exceptions.Timeout:
+            raise RuntimeError("流式请求超时") from None
         except Exception as e:
-            raise RuntimeError(f"流式生成错误: {str(e)}") from e
-
+            raise RuntimeError(f"流式生成发生错误: {str(e)}") from e
 
 class SparkClient(BaseAIClient):
     def _get_default_model(self) -> str:
