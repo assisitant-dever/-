@@ -5,8 +5,6 @@ from .encryption import decrypt_api_key
 from .models import AIModel, Conversation 
 from sqlalchemy.orm import Session
 from typing import Optional, Dict,Iterator,Union
-import requests
-import json
 # 加载环境变量
 load_dotenv()
 
