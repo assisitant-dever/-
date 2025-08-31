@@ -3,7 +3,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { saveAs } from "file-saver";
 
-const API_BASE = process.env.REACT_APP_API_URL;
+
+const API_BASE = import.meta.env.VITE_API_URL;
+
 
 export default function Editor() {
   // ---------------- 用户状态 ----------------

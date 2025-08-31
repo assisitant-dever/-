@@ -1,8 +1,11 @@
 // src/api.ts
 import axios from "axios";
+console.log('后端基础地址:', import.meta.env.VITE_API_URL); 
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL, // 或你的后端地址
+
+  baseURL: import.meta.env.VITE_API_URL, // 或你的后端地址
+
 });
 
 // ✅ 请求拦截器：自动带上 token
